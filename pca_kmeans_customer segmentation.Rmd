@@ -1,0 +1,288 @@
+---
+title: "Kmeans pca practice"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(cluster)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(plotly)
+library(data.table)
+library(caret)
+library(ggbiplot)
+library(tidyr)
+
+current_date <- as.Date("2014-07-01")
+```
+
+
+# Problem Statement
+
+An advertisement division of large club store needs to perform customer analysis 
+the store customers in order to create a segmentation for more targeted marketing campaign 
+
+The task is to identify similar customers and characterize them (at least some of them). 
+In other word perform clustering and identify customers segmentation.
+
+```
+Colomns description:
+People
+  ID: Customer's unique identifier
+  Year_Birth: Customer's birth year
+  Education: Customer's education level
+  Marital_Status: Customer's marital status
+  Income: Customer's yearly household income
+  Kidhome: Number of children in customer's household
+  Teenhome: Number of teenagers in customer's household
+  Dt_Customer: Date of customer's enrollment with the company
+  Recency: Number of days since customer's last purchase
+  Complain: 1 if the customer complained in the last 2 years, 0 otherwise
+
+Products
+
+  MntWines: Amount spent on wine in last 2 years
+  MntFruits: Amount spent on fruits in last 2 years
+  MntMeatProducts: Amount spent on meat in last 2 years
+  MntFishProducts: Amount spent on fish in last 2 years
+  MntSweetProducts: Amount spent on sweets in last 2 years
+  MntGoldProds: Amount spent on gold in last 2 years
+
+Place
+  NumWebPurchases: Number of purchases made through the company’s website
+  NumStorePurchases: Number of purchases made directly in stores
+```
+
+Assume that data was current on 2014-07-01
+
+# 1. Read Dataset and Data Conversion to Proper Data Format
+
+Read "m_marketing_campaign.csv" using `data.table::fread` command, examine the data.
+
+> `fread` function of `data.table` read cvs real fast
+
+```{r}
+# fread m_marketing_campaign.csv and save it as df
+df <- fread("m_marketing_campaign.csv")
+```
+
+
+
+```{r}
+# Convert Year_Birth to Age (assume that current date is 2014-07-01)
+df$Age <- 2014 - df$Year_Birth
+
+# Dt_Customer is a date (it is still character), convert it to membership days (name it MembershipDays)
+# hint: note European date format, use as.Date with proper format argument
+df$Dt_Customer <- as.Date(df$Dt_Customer, format="%d-%m-%Y")
+df$MembershipDays <- as.integer(as.Date(current_date, format="%d-%m-%Y") - df$Dt_Customer) #as.integer because it otherwise gives the result with "days" also printed making it a character type data instead of integer
+
+```
+
+```{r}
+# Summarize Education column (use table function)
+table(df$Education)
+
+# Lets treat Education column as ordinal categories and use simple levels for distance calculations
+# Assuming following order of degrees:
+#    HighSchool, Associate, Bachelor, Master, PhD
+# factorize Education column (hint: use factor function with above levels)
+df$Education = factor(df$Education, levels = c("HighSchool","Associate","Bachelor","Master","PhD" ),
+                         labels = c(1,2,3,4,5))
+
+```
+
+```{r}
+# Summarize Education column (use table function)
+table(df$Education)
+
+# Lets convert single Marital_Status categories for 5 separate binary categories 
+# Divorced, Married, Single, Together and Widow, the value will be 1 if customer 
+# is in that category and 0 if customer is not
+# hint: use dummyVars from caret package, model.matrix or simple comparison (there are only 5 groups)
+dummy <- dummyVars("~Marital_Status", data = df)
+transf<- data.frame(predict(dummy, newdata = df))
+df <-cbind(df,transf)
+
+```
+
+```{r}
+# lets remove columns which we will no longer use:
+# remove ID, Year_Birth, Dt_Customer, Marital_Status
+# and save it as df_sel 
+df_sel <- subset(df, select=-c(ID, Year_Birth, Dt_Customer, Marital_Status))
+
+# Convert Education to integers 
+# hint: use as.integer function, if you use factor function earlier 
+# properly then HighSchool will be 1, Associate will be 2 and so on)
+df_sel$Education <- as.integer(df_sel$Education)
+
+```
+
+
+```{r}
+# lets scale
+# run scale function on df_sel and save it as df_scale
+# that will be our scaled values which we will use for analysis
+df_scale <- scale(df_sel)
+
+```
+
+(5 points)
+
+# 2. Run PCA
+
+```{r}
+# Run PCA on df_scale, make biplot and scree plot/percentage variance explained plot
+# save as pc_out, we will use pc_out$x[,1] and pc_out$x[,2] later for plotting
+pc_out <- prcomp(df_scale, scale = FALSE)
+biplot(pc_out, scale = 0)
+```
+
+```{r}
+
+pr.var <- pc_out$sdev^2
+pve <- pr.var / sum(pr.var)
+
+par(mfrow = c(1, 2))
+plot(pve, xlab = "Principal Component",
+    ylab = "Proportion of Variance Explained", ylim = c(0, 1),
+    type = "b")
+
+
+```
+
+
+Comment on observation (any visible distinct clusters?):
+In the above screeplot, the elbow is achieved at x=2 as it starts to flatten here. So most of the variability is explained by the first two components. The latter components only explain a small fraction of the overall variability.
+
+# 3. Cluster with K-Means
+## 3.1 Selecting Number of Clusters
+
+Run K-Means for a range of k-s select one to use later 
+(save it as k_kmeans)
+
+```{r}
+# k_kmeans <- 
+set.seed(42)
+km_out_list <- lapply(1:15, function(k) list(
+  k=k,
+  k_kmeans=kmeans(df_scale, k, nstart = 20)))
+
+km_results <- data.frame(
+  k=sapply(km_out_list, function(k) k$k),
+  totss=sapply(km_out_list, function(k) k$k_kmeans$totss),
+  tot_withinss=sapply(km_out_list, function(k) k$k_kmeans$tot.withinss)
+  )
+km_results
+plot_ly(km_results,x=~k,y=~tot_withinss) %>% add_markers() %>% add_paths()
+
+```
+
+
+
+
+Which k did you choose and why?
+I'm choosing k=2, since at this point the graph has more defined elbow than any other k. Here the sum of squared distance flattens out more than it did for all k before 2 and after 2. k=2 seems like a more distinct inflection point. So we choose 2 clusters for this data.
+
+
+## 3.2 Clusters Visulalization
+
+Make k-Means clusters with selected k_kmeans (store result as km_out).
+Plot your k_kmeans clusters on biplot (just PC1 vs PC2) by coloring points by their cluster id.
+
+```{r}
+km_out <- kmeans(df_scale,2,nstart=20)
+plot_ly(x=pc_out$x[,1],y=pc_out$x[,2], color = as.factor(km_out$cluster))
+```
+
+Do you see any grouping? Comment on you observation.
+We see one group to the left and the other to the right. But without coloring, you couldn't differentiate between the groupings. 
+
+## 3.3 Characterizing Cluster
+
+Perform descriptive statistics analysis on obtained cluster. Based on that does one or more group have a distinct characteristics?
+
+
+```{r}
+df <- cbind(df,data.frame(km_out$cluster))
+summary(df$km_out.cluster)
+tapply(df$Income, df$km_out.cluster, summary) #clear characteristic difference in clusters obtained
+tapply(df$Age, df$km_out.cluster, summary)  # no clear characteristic difference in clusters obtained
+tapply(df$Kidhome, df$km_out.cluster, summary)  # slight characteristic difference in clusters obtained
+tapply(df$Teenhome, df$km_out.cluster, summary)  # no clear characteristic difference in clusters obtained
+tapply(df$MntWines, df$km_out.cluster, summary)  # clear characteristic difference in clusters obtained
+tapply(df$MntFruits, df$km_out.cluster, summary)  # clear characteristic difference in clusters obtained
+tapply(df$MntMeatProducts, df$km_out.cluster, summary)  # clear characteristic difference in clusters obtained
+tapply(df$MntFishProducts, df$km_out.cluster, summary)  # clear characteristic difference in clusters obtained
+tapply(df$MntSweetProducts, df$km_out.cluster, summary)  # clear characteristic difference in clusters obtained
+tapply(df$MntGoldProds, df$km_out.cluster, summary)  # clear characteristic difference in clusters obtained
+tapply(df$MembershipDays, df$km_out.cluster, summary)  # no clear characteristic difference in clusters obtained
+
+```
+
+Characteristic differences:
+
+Income: We can see that when summarized on Income and clusters, the first cluster has lower average income than the second cluster, infact, it is nearly half of the second cluster. So the second cluster has higher income than the first cluster.
+
+Kidhome: The first cluster has more children than the second cluster
+
+MntWines: Second cluster spends more on wine than the first cluster, probably because of high income.
+
+MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds: Second cluster spends more on these items than the first cluster, probably because of high income.
+
+Others such as MembershipDays, Teenhome and Age did not really show significant characteristic difference.
+
+# 4. Cluster with Hierarchical Clustering
+
+
+Perform clustering with Hierarchical method.
+Plot dendagram, based on it choose linkage and number of clusters, if possible, explain your choice.
+
+
+```{r}
+# the distance is euclidean 
+df_scaled_d <- dist(df_scale, method="euclidean")
+
+#clustering wit complete, single and average methods, the distance is euclidean 
+df_scaled_complete <- hclust(df_scaled_d, method='complete')
+df_scaled_single <- hclust(df_scaled_d, method='single')
+df_scaled_average <- hclust(df_scaled_d, method='average')
+
+```
+```{r}
+#plotting the dendrograms of the the complete method, the distance is euclidean 
+plot(hclust(df_scaled_d, method = "complete"))
+```
+
+```{r}
+#plotting the dendrograms of the the single method, the distance is euclidean 
+plot(hclust(df_scaled_d, method = "single"))
+```
+```{r}
+#plotting the dendrograms of the the average method, the distance is euclidean 
+plot(hclust(df_scaled_d, method = "average"))
+```
+
+I reviewed the dendrograms of different methods of linkage (single, average and complete). These dendrograms fail to show a good overall  visualization due to the data being large. If we have to cluster based on these results, we may be able to create 3 clusters at the height of approximately 16 because at this height the hierarchy flow looks more clear and the clusters are possibly different. Also, I choose "complete" method rather than the other two because it looked comparatively more distinct. But my conclusion is that it is not a good idea to rely on hierarchical clustering for this data since we may not be able to cluster more accurately based on such a messy plot.
+
+
+```{r}
+#Implementing cutree method for 3 clusters
+data_scaled_ct <- cutree(df_scaled_complete, k=3)
+data_scaled_ct
+
+
+
+```
+
+
+
+
+
+
+
